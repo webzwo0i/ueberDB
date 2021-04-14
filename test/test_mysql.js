@@ -36,60 +36,37 @@ describe(__filename, function () {
     let large;
     let largeKey;
     let db;
-    const randomKey = randomString(10);
+    const errors = [];
 
     before(async function () {
       db = new mysql.Database(databases.mysql);
       await db.init();
       large = randomString(10000);
       largeKey = randomString(95);
-      await db.set(largeKey,large);
-      let i = 0;
-      // put some data in
-      while (i < 5000) {
-        await db.set(`${randomString(4)}${i}`, large);
-        i += 1;
-      }
+      await db.set(largeKey, large);
       db.settings.queryTimeout = 1;
       db.logger = Object.setPrototypeOf({error() {}}, db.logger);
     });
 
     after(async function () {
       db.close();
+      console.log('Accumulated errors', errors);
     });
 
     it('get times out ', async function () {
-      let errored = false;
-      for (let i=0; i < 10000; i++) {
-	try {
-          await db.findKeys('*');
-          await db.get(`${largeKey}${randomString(5)}`);
-	  // intentionally no break
-        } catch { errored = true; }
-	assert(errored);
+      const p = [];
+      for (let i = 0; i < 10000; i++) {
+        p.push(db.findKeys('*'));
+        p.push(db.get(`${largeKey}${randomString(5)}`));
+        p.push(db.set(randomString(10), large));
       }
-    });
-    it('set times out ', async function () {
-      let errored = false;
-      for (let i=0; i < 10000; i++) {
-	try {
-          await db.findKeys('*');
-          await db.set(randomString(10), large);
-	  // intentionally no break
-        } catch { errored = true; }
-	assert(errored);
+      try {
+        await Promise.all(p);
+      } catch (e) {
+        errors.push(e);
       }
-    });
-    it('findKeys times out ', async function () {
-      let errored = false;
-      for (let i=0; i < 10000; i++) {
-	try {
-          await db.findKeys('*');
-	  // intentionally no break
-        } catch { errored = true; }
-	assert(errored);
-      }
-      
+
+      assert.strictEqual(errors.length, 0);
     });
   });
 });
