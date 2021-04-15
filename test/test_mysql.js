@@ -38,4 +38,42 @@ describe(__filename, function () {
     await assert.rejects(db._query({sql: 'DO SLEEP(0.110);'}));
     await db.close();
   });
+
+  it('parallel requests work', async function () {
+    const db = new mysql.Database(databases.mysql);
+    await db.init();
+    // Timeout error messages are expected; prevent them from being logged.
+    db.logger = Object.setPrototypeOf({error() {}}, db.logger);
+    db.settings.queryTimeout = 100;
+    const promises = [];
+    const start = Date.now();
+    // schedule 10 requests, that all reject after 100ms
+    for (let i = 0; i < 10; i++) {
+      promises.push(assert.rejects(db._query({sql: 'DO SLEEP(1);'})));
+    }
+    await Promise.all(promises);
+    // they should have been scheduled in parallel
+    assert(Date.now() - start < 190);
+    await db.close();
+  });
+
+  it('pool schedules requests, when full', async function () {
+    const db = new mysql.Database(databases.mysql);
+    await db.init();
+    // Timeout error messages are expected; prevent them from being logged.
+    db.logger = Object.setPrototypeOf({error() {}}, db.logger);
+    db.settings.queryTimeout = 100;
+    const promises = [];
+    const start = Date.now();
+    // schedule 11 requests, so one should be scheduled after 100ms
+    // while the 10 others are scheduled immediately
+    for (let i = 0; i < 11; i++) {
+      promises.push(assert.rejects(db._query({sql: 'DO SLEEP(1);'})));
+    }
+    await Promise.all(promises);
+    const finish = Date.now();
+    assert(finish - start >= 200);
+    assert(finish - start < 290);
+    await db.close();
+  });
 });
