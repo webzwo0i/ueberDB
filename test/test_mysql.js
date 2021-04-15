@@ -17,16 +17,14 @@ describe(__filename, function () {
     await assert.rejects(db.init());
   });
 
-  it('reconnect after fatal error', async function () {
+  it('query after fatal error works', async function () {
     const db = new mysql.Database(databases.mysql);
     await db.init();
-    const before = await db._connection;
     // An error is expected; prevent it from being logged.
     db.logger = Object.setPrototypeOf({error() {}}, db.logger);
     // Sleep longer than the timeout to force a fatal error.
     await assert.rejects(db._query({sql: 'DO SLEEP(1);', timeout: 1}), {fatal: true});
-    const after = await db._connection;
-    assert.notEqual(after, before);
+    await assert.doesNotReject(db._query({sql: 'SELECT 1;'}));
     await db.close();
   });
 

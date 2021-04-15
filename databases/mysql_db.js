@@ -33,52 +33,19 @@ exports.Database = class {
       queryTimeout: 60000,
     };
     this._pingTimeout = null;
-    // Promise that resolves to a MySQL Connection object.
-    this._connection = this._connect();
+    this._pool = null; // Initialized in init();
   }
 
   get isAsync() { return true; }
 
-  _connect() {
-    const p = (async () => {
-      let connection;
-      try {
-        connection = mysql.createConnection(this._mysqlSettings);
-        connection.on('error', (err) => this._handleMysqlError(err));
-        await util.promisify(connection.connect.bind(connection))();
-      } catch (err) {
-        this.logger.error(`MySQL connection error: ${err.stack || err}`);
-        throw err;
-      }
-      this.schedulePing();
-      return connection;
-    })();
-    // Suppress "unhandled Promise rejection" if connection fails before init() is called. If the
-    // connection does fail, init() will throw when it awaits p.
-    p.catch(() => {});
-    return p;
-  }
-
-  _handleMysqlError(err) {
-    this.logger.error(`${err.fatal ? 'Fatal ' : ''}MySQL error: ${err.stack || err}`);
-    if (!err.fatal) return;
-    // Must reconnect on fatal error. Start closing the old connection (ignoring any errors), but
-    // don't wait for it to finish closing before resetting this._connection otherwise the old
-    // connection might still be used. Closing the old connection might be unnecessary, but it
-    // shouldn't hurt.
-    this._connection.then((connection) => connection.end(() => {})).catch(() => {});
-    this._connection = this._connect();
-  }
-
   async _query(options) {
-    const connection = await this._connection;
     try {
       return await new Promise((resolve, reject) => {
         options = {timeout: this.settings.queryTimeout, ...options};
-        connection.query(options, (err, ...args) => err != null ? reject(err) : resolve(args));
+        this._pool.query(options, (err, ...args) => err != null ? reject(err) : resolve(args));
       });
     } catch (err) {
-      this._handleMysqlError(err);
+      this.logger.error(`${err.fatal ? 'Fatal ' : ''}MySQL error: ${err.stack || err}`);
       throw err;
     } finally {
       this.schedulePing();
@@ -97,6 +64,7 @@ exports.Database = class {
   }
 
   async init() {
+    this._pool = mysql.createPool(this._mysqlSettings);
     const {database, charset} = this._mysqlSettings;
 
     const sqlCreate = `${'CREATE TABLE IF NOT EXISTS `store` ( ' +
@@ -217,10 +185,7 @@ exports.Database = class {
   }
 
   async close() {
-    const connection = await this._connection;
-    // Clear the ping after getting the connection to avoid a race where close() is called while a
-    // new connection is being created.
     this.clearPing();
-    await util.promisify(connection.end.bind(connection))();
+    await util.promisify(this._pool.end.bind(this._pool))();
   }
 };
